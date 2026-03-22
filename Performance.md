@@ -1,0 +1,3305 @@
+11
+
+Performance
+
+There are a wide range of metrics for judging the execution quality of a
+
+program, including CPU utilization, throughput, latency, response time,
+
+memory usage, and cache hit rate. These metrics can also be assessed in
+
+different ways with respect to their statistical distribution. For example,
+
+with latency, depending on your goals, you might need to consider aver-
+
+age latency, median latency, 99th percentile latency, or worst-case latency.
+
+There are also application-specific metrics that build on these lower-level
+
+ones, such as transactions per second, time to first paint, maximum frame
+
+rate, and goodput.
+
+Achieving good performance means that code you’ve written meets your
+
+expectations for one or more of the quantitative measurements that you
+
+care about most. Which metrics matter depends on the problem domain,
+
+production environment, and user profile; there’s not a one-size-fits-all
+
+goal. Performance engineering is the discipline of analyzing program exe-
+
+cution behavior, identifying areas for improvement, and implementing
+
+changes—large and small—to maximize or minimize the metrics that are
+
+most important.
+
+Python is not considered to be a high-performance language, especially in
+
+comparison to lower-level languages built for the task. This reputation is
+
+understandable given the overhead and constraints of the Python run-
+
+time, especially when it comes to parallelism (see Item 68: “Use Threads
+
+for Blocking I/O; Avoid for Parallelism” for background). That said,
+
+Python includes a variety of capabilities that enable programs to achieve
+
+surprisingly impressive performance with relatively low amounts of ef-
+
+fort. Using these features, it’s possible to extract maximum performance
+
+from a host system while retaining the productivity gains afforded by
+
+Python’s high-level nature.
+
+Item 92: Profile Before Optimizing
+
+The dynamic nature of Python causes surprising behaviors in its runtime
+
+performance. Operations you might assume would be slow are actually
+
+very fast (e.g., string manipulation, use of generators). Language features
+
+you might assume would be fast are actually very slow (e.g., attribute ac-
+
+cesses, function calls). The true source of slowdowns in a Python program
+
+can be obscure.
+
+The best approach is to ignore your intuition and directly measure the
+
+performance of a program before you try to optimize it. Python provides
+
+a built-in profiler for determining which parts of a program are responsi-
+
+ble for its execution time. Profiling enables you to focus your optimiza-
+
+tion efforts on the biggest sources of trouble and ignore parts of the pro-
+
+gram that don’t impact speed (i.e., follow Amdahl’s law from academic
+
+literature).
+
+For example, say that I want to determine why an algorithm in a program
+
+is slow. Here I define a function that sorts a list of data using an insertion
+
+sort:
+
+Click here to view code image
+
+def insertion_sort(data):
+
+    result = []
+
+    for value in data:
+
+        insert_value(result, value)
+
+    return result
+
+The core mechanism of the insertion sort is the function that finds the in-
+
+sertion point for each piece of data. Here I define an extremely inefficient
+
+version of the  insert_value  function that does a linear scan over the
+
+input array:
+
+Click here to view code image
+
+def insert_value(array, value):
+
+    for i, existing in enumerate(array):
+
+        if existing > value:
+
+            array.insert(i, value)
+
+            return
+    array.append(value)
+
+To profile  insertion_sort  and  insert_value , I create a data set of
+
+random numbers and define a  test  function to pass to the profiler (see
+
+Item 39: “Prefer  functools.partial  over  lambda  Expressions for
+
+Glue Functions” for background on  lambda ):
+
+Click here to view code image
+
+from random import randint
+
+max_size = 12**4
+
+data = [randint(0, max_size) for _ in range(max_size)]
+
+test = lambda: insertion_sort(data)
+
+Python provides two built-in profilers: one that is pure Python ( pro‐
+
+file ) and another that is a C-extension module ( cProfile ). The  cPro‐
+
+file  built-in module is better because of its minimal impact on the per-
+
+formance of your program while it’s being profiled. The pure-Python al-
+
+ternative imposes a high overhead that skews the results.
+
+Note
+
+When profiling a Python program, be sure that what you’re
+
+measuring is the code itself and not any external systems.
+
+Beware of functions that access the network or resources on
+
+disk. These may appear to have a large impact on your pro-
+
+gram’s execution time because of the slowness of the under-
+
+lying systems. If your program uses a cache to mask the la-
+
+tency of slow resources like these, you should also ensure
+
+that it’s properly warmed up before you start profiling.
+
+Here I instantiate a  Profile  object from the  cProfile  module and run
+
+the test function through it by using the  runcall  method:
+
+from cProfile import Profile
+
+profiler = Profile()
+
+profiler.runcall(test)
+
+When the test function has finished running, I can extract statistics about
+
+its performance by using the  pstats  built-in module and its  Stats
+
+class. Various methods on a  Stats  object adjust how to select and sort
+
+the profiling information to show only the things I care about:
+
+from pstats import Stats
+
+stats = Stats(profiler)
+
+stats.strip_dirs()
+
+stats.sort_stats("cumulative")
+
+stats.print_stats()
+
+The output is a table of information organized by function. The data sam-
+
+ple is taken only from the time the profiler was active, during the  run‐
+
+call  method above:
+
+Click here to view code image
+
+>>>
+
+       41475 function calls in 2.198 seconds
+
+  Ordered by: cumulative time
+
+  ncalls tottime percall cumtime percall filename:lineno(function)
+
+       1   0.000   0.000   2.198   2.198 main.py:35(<lambda>)
+
+       1   0.003   0.003   2.198   2.198 main.py:10(insertion_sort)
+
+   20736   2.137   0.000   2.195   0.000 main.py:20(insert_value)
+
+   20729   0.058   0.000   0.058   0.000 {method 'insert' of 'list' objects}
+
+       7   0.000   0.000   0.000   0.000 {method 'append' of 'list' objects}
+
+Here’s a quick guide to what the profiler statistics columns mean:
+
+ncalls : The number of calls to the function during the profiling
+
+period.
+
+tottime : The number of seconds spent executing the function, ex-
+
+cluding time spent executing other functions it calls.
+
+tottime percall : The average number of seconds spent in the
+
+function each time it was called, excluding time spent executing other
+
+functions it calls. This is  tottime  divided by  ncalls .
+
+cumtime : The cumulative number of seconds spent executing the
+
+function, including time spent in all other functions it calls.
+
+cumtime percall : The average number of seconds spent in the
+
+function each time it was called, including time spent in all other func-
+
+tions it calls. This is  cumtime  divided by  ncalls .
+
+Looking at the profiler statistics table above, I can see that the biggest use
+
+of CPU in my test is the cumulative time spent in the  insert_value
+
+function. Here I redefine that function to use the more efficient  bisect
+
+built-in module (see Item 102: “Consider Searching Sorted Sequences
+
+with  bisect ”):
+
+Click here to view code image
+
+from bisect import bisect_left
+
+def insert_value(array, value):
+
+    i = bisect_left(array, value)
+
+    array.insert(i, value)
+
+I can run the profiler again and generate a new table of profiler statistics.
+
+The new function is much faster, with a cumulative time spent that is
+
+nearly 40 times smaller than with the previous  insert_value  function:
+
+Click here to view code image
+
+>>>
+
+       62211 function calls in 0.067 seconds
+
+  Ordered by: cumulative time
+
+  ncalls tottime percall cumtime percall filename:lineno(function)
+
+       1   0.000   0.000   0.067   0.067 main.py:35(<lambda>)
+
+       1   0.002   0.002   0.067   0.067 main.py:10(insertion_sort)
+
+   20736   0.004   0.000   0.064   0.000 main.py:109(insert_value)
+
+   20736   0.056   0.000   0.056   0.000 {method 'insert' of 'list' objects}
+
+   20736   0.004   0.000   0.004   0.000 {built-in method _bisect.bisect_left
+
+Sometimes when you’re profiling an entire program, you might find that
+
+a common utility function is responsible for the majority of execution
+
+time. The default output from the profiler makes such a situation difficult
+
+to understand because it doesn’t show that the utility function is called by
+
+many different parts of your program.
+
+For example, here the  my_utility  function is called repeatedly by two
+
+different functions in the program:
+
+def my_utility(a, b):
+
+    c = 1
+
+    for i in range(100):
+
+        c += a * b
+
+def first_func():
+
+    for _ in range(1000):
+
+        my_utility(4, 5)
+
+def second_func():
+
+    for _ in range(10):
+
+        my_utility(1, 3)
+
+def my_program():
+
+    for _ in range(20):
+
+        first_func()
+
+        second_func()
+
+Profiling this code and using the default  print_stats  output produces
+
+statistics that are confusing:
+
+Click here to view code image
+
+>>>
+         20242 function calls in 0.040 seconds
+
+   Ordered by: cumulative time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+
+        1    0.000    0.000    0.040    0.040 main.py:172(my_program)
+
+       20    0.002    0.000    0.040    0.002 main.py:164(first_func)
+
+    20200    0.038    0.000    0.038    0.000 main.py:159(my_utility)
+
+       20    0.000    0.000    0.000    0.000 main.py:168(second_func)
+
+The  my_utility  function is clearly the source of most execution time,
+
+but it’s not immediately obvious why that function is called so much. If
+
+you search through the program’s code, you’ll find multiple call sites for
+
+my_utility  and will still be confused.
+
+To deal with this, the Python profiler provides the  print_callers
+
+method to show which callers contributed to the profiling information of
+
+each function:
+
+stats.print_callers()
+
+This profiler statistics table shows functions called on the left and which
+
+function was responsible for making the call on the right. Here it’s clear
+
+that  my_utility  is most used by  first_func :
+
+Click here to view code image
+
+>>>
+
+   Ordered by: cumulative time
+
+Function                      was called by...
+
+                                  ncalls  tottime  cumtime
+
+main.py:172(my_program)       <-
+
+main.py:164(first_func)       <-      20    0.002  0.040  main.py:172(my_prog
+
+main.py:159(my_utility)       <-   20000    0.038  0.038  main.py:164(first_f
+
+                                     200    0.000  0.000  main.py:168(second_
+
+main.py:168(second_func)      <-      20    0.000  0.000
+
+Alternatively, you can call the  print_callees  method, which shows a
+
+top-down segmentation of how each function (on the left) spends time ex-
+
+ecuting other dependent functions (on the right) deeper in the call stack:
+
+Click here to view code image
+
+stats.print_callees()
+
+>>>
+
+callees
+
+   Ordered by: cumulative time
+
+Function                      called...
+
+                                  ncalls  tottime  cumtime
+
+main.py:172(my_program)       ->      20    0.002    0.041  Profiling.md:164(
+
+                                      20    0.000    0.000  Profiling.md:168(
+
+main.py:164(first_func)       ->   20000    0.038    0.038  Profiling.md:159(
+
+main.py:159(my_utility)       ->
+
+main.py:168(second_func)      ->     200    0.000    0.000  Profiling.md:159(
+
+If you’re not able to figure out why your program is slow using  cPro‐
+
+file , fear not. Python includes other tools for assessing performance
+
+(see Item 93: “Optimize Performance-Critical Code Using  timeit
+
+Microbenchmarks,” Item 98: “Lazy-Load Modules with Dynamic
+
+Imports to Reduce Startup Time,” and Item 115: “Use  tracemalloc  to
+
+Understand Memory Usage and Leaks”). There are also community-
+
+built tools (see Item 116: “Know Where to Find Community-Built
+
+Modules”) that have additional capabilities for assessing performance,
+
+such as line profilers, sampling profilers, integration with Linux’s  perf
+
+tool, memory usage profilers, and more.
+
+Things to Remember
+
+ It’s important to profile Python programs before optimizing because
+
+the sources of slowdowns are often obscure.
+
+ Use the  cProfile  module instead of the  profile  module because
+
+it provides more accurate profiling information.
+
+ The  Profile  object’s  runcall  method provides everything you
+
+need to profile a tree of function calls in isolation.
+
+ The  Stats  object lets you select and print the subset of profiling in-
+
+formation you need to see to understand your program’s performance.
+
+Item 93: Optimize Performance-Critical Code Using  timeit
+
+Microbenchmarks
+
+When attempting to maximize the performance of a Python program, it’s
+
+extremely important to use a profiler because the source of slowness
+
+might not be obvious (see Item 92: “Profile Before Optimizing”). Once
+
+the real problem areas are identified, refactoring to a better architecture
+
+or using more appropriate data structures can often have a dramatic ef-
+
+fect (see Item 104: “Know How to Use  heapq  for Priority Queues”).
+
+However, some hotspots in the code might seem inextinguishable even af-
+
+ter many rounds of profiling and optimizing. Before attempting more
+
+complex solutions (see Item 94: “Know When and How to Replace
+
+Python with Another Programming Language”), it’s worth considering
+
+using the  timeit  built-in module to run microbenchmarks.
+
+The purpose of  timeit  is to precisely measure the performance of small
+
+snippets of code. It lets you quantify and compare multiple solutions to
+
+the same pinpointed problem. While profiling and whole-program bench-
+
+marks do help with discovering room for optimization in larger compo-
+
+nents, the number of potential improvements at such wide scope might
+
+be limitless and costly to explore. Microbenchmarks, in contrast, can be
+
+used to measure multiple implementations of the same narrowly defined
+
+behavior, enabling you to take a scientific approach in searching for the
+
+solution that performs best.
+
+Using the  timeit  module is simple. Here I measure how long it takes to
+
+add two integers together:
+
+Click here to view code image
+
+import timeit
+
+delay = timeit.timeit(stmt="1+2")
+
+print(delay)
+
+>>>
+
+0.003767708025407046
+
+The returned value is the number of seconds required to run 1 million it-
+
+erations of the code snippet provided in the  stmt  argument. This default
+
+amount of repetition might be too much for slower microbenchmarks, so
+
+timeit  lets you specify a more appropriate count by using the  number
+
+argument:
+
+Click here to view code image
+
+delay = timeit.timeit(stmt="1+2", number=100)
+
+print(delay)
+
+>>>
+
+7.500057108700275e-07
+
+However, the 100 iterations specified above are so few that the measured
+
+microbenchmark time might start to disappear in the noise of the com-
+
+puter. There will always be some natural variation in performance due to
+
+other processes interfering with memory and cache status, the operating
+
+system running periodic background tasks, hardware interrupts being re-
+
+ceived, and so on. For a microbenchmark to be accurate, it needs to use a
+
+large number of iterations to compensate for this noise. The  timeit
+
+module also disables garbage collection while it executes snippets to try
+
+to reduce variance.
+
+I suggest providing the iteration count argument explicitly. I usually as-
+
+sign it to a variable that I use again later to calculate the average per-iter-
+
+ation time. This normalized value can then serve as a robust metric that
+
+can be compared to other implementations if desired or tracked over
+
+time (e.g., to detect regressions):
+
+Click here to view code image
+
+count = 1_000_000
+
+delay = timeit.timeit(stmt="1+2", number=count)
+
+print(f"{delay/count*1e9:.2f} nanoseconds")
+
+>>>
+
+4.36 nanoseconds
+
+Running a single snippet of code over and over again isn’t always suffi-
+
+cient to produce a useful microbenchmark. You often need to create some
+
+kind of scaffolding, harness, or data structure that can be used during it-
+
+eration.  timeit ’s  setup  argument addresses this need by accepting a
+
+code snippet that runs a single time before all iterations and is excluded
+
+from the time measurement.
+
+For example, imagine that I’m trying to determine if a number is present
+
+in a large randomized list of values. I don’t want the microbenchmark to
+
+include the time spent creating a large list and randomizing it. Here I put
+
+these upfront tasks in the  setup  snippet; I also provide the  globals  ar-
+
+gument so  stmt  and  setup  can refer to names defined elsewhere in the
+
+code, such as the imported  random  module (see Item 91: “Avoid  exec
+
+and  eval  Unless You’re Building a Developer Tool” for background):
+
+Click here to view code image
+
+import random
+
+count = 100_000
+
+delay = timeit.timeit(
+
+    setup="""
+
+numbers = list(range(10_000))
+
+random.shuffle(numbers)
+
+probe = 7_777
+
+""",
+
+    stmt="""
+
+probe in numbers
+
+""",
+
+    globals=globals(),
+
+    number=count,
+
+)
+
+print(f"{delay/count*1e9:.2f} nanoseconds")
+
+>>>
+
+13078.05 nanoseconds
+
+With this baseline (13 milliseconds) established, I can try to produce the
+
+same behavior using a different approach to see how it affects the mi-
+
+crobenchmark. Here I swap out the list created in the  setup  code snip-
+
+pet for a set data structure:
+
+Click here to view code image
+
+delay = timeit.timeit(
+
+    setup="""
+
+numbers = set(range(10_000))
+
+probe = 7_777
+
+""",
+
+    stmt="""
+
+probe in numbers
+
+""",
+
+    globals=globals(),
+
+    number=count,
+
+)
+
+print(f"{delay/count*1e9:.2f} nanoseconds")
+
+>>>
+
+14.87 nanoseconds
+
+This shows that checking for membership in a set is about 1,000 times
+
+faster than checking in a list. The reason is that the set data structure pro-
+
+vides constant time access to its elements, similar to a  dict , whereas a
+
+list requires time proportional to the number of elements it contains.
+
+Using  timeit  like this is a great way to find an ideal data structure or al-
+
+gorithm for your needs.
+
+One problem that can arise in microbenchmarking like this is the need to
+
+measure the performance of tight loops, such as in mathematical kernel
+
+functions. For example, here I test the speed of summing a list of
+
+numbers:
+
+Click here to view code image
+
+def loop_sum(items):
+
+    total = 0
+
+    for i in items:
+
+        total += i
+
+    return total
+
+count = 1000
+
+delay = timeit.timeit(
+
+    setup="numbers = list(range(10_000))",
+
+    stmt="loop_sum(numbers)",
+
+    globals=globals(),
+
+    number=count,
+
+)
+
+print(f"{delay/count*1e9:.2f} nanoseconds")
+
+>>>
+
+142365.46 nanoseconds
+
+This measurement is how long it takes for each call to  loop_sum , which
+
+is meaningless on its own. What you need to make this microbenchmark
+
+robust is to normalize it by the number of iterations in the inner loop,
+
+which was hard-coded to  10_000  in the example above:
+
+Click here to view code image
+
+print(f"{delay/count/10_000*1e9:.2f} nanoseconds")
+
+>>>
+
+14.43 nanoseconds
+
+Now I can see that this function will scale in proportion to the number of
+
+items in the list by 14.43 nanoseconds per additional item.
+
+The  timeit  module can also be executed as a command-line tool, which
+
+can help you rapidly investigate any curiosities you have about Python
+
+performance. For example, imagine that I want to determine the fastest
+
+way to look up a key that’s already present in a dictionary (see Item 26:
+
+“Prefer  get  over  in  and  KeyError  to Handle Missing Dictionary
+
+Keys”). Here I use the  timeit  command-line interface to test using the
+
+in  operator for this purpose:
+
+Click here to view code image
+
+$ python3 -m timeit \
+
+--setup='my_dict = {"key": 123}' \
+
+'if "key" in my_dict: my_dict["key"]'
+
+20000000 loops, best of 5: 19.3 nsec per loop
+
+The tool automatically determines how many iterations to run based on
+
+how much time a single iteration takes. It also runs five separate tests to
+
+compensate for system noise and presents the minimum as the best-case,
+
+lower-bound performance.
+
+I can run the tool again using a different snippet that will show how the
+
+dict.get  method compares to the  in  operator:
+
+Click here to view code image
+
+$ python3 -m timeit \
+--setup='my_dict = {"key": 123}' \
+
+'if (value := my_dict.get("key")) is not None: value'
+20000000 loops, best of 5: 17.1 nsec per loop
+
+Now I know that  get  is faster than  in . What about the approach of
+
+catching a known exception type, which is a common style in Python pro-
+
+grams (see Item 32: “Prefer Raising Exceptions to Returning  None ”)?
+
+Click here to view code image
+
+$ python3 -m timeit \
+
+--setup='my_dict = {"key": 123}' \
+'try: my_dict["key"]
+
+except KeyError: pass'
+20000000 loops, best of 5: 10.6 nsec per loop
+
+It turns out that the  KeyError  approach is actually fastest for keys that
+
+are expected to already exist in the dictionary. This might seem surpris-
+
+ing, given all the extra machinery required to raise and catch exceptions
+
+in the missing key case. This non-obvious performance behavior illus-
+
+trates why it’s so important to test your assumptions and use profiling
+
+and microbenchmarks to measure before optimizing Python code.
+
+Things to Remember
+
+ The  timeit  built-in module can be used to run microbenchmarks
+
+that help you scientifically determine the best data structures and al-
+
+gorithms for performance-critical parts of programs.
+
+ To make microbenchmarks robust, use the  setup  code snippet to
+
+exclude initialization time and be sure to normalize the returned mea-
+
+surements into comparable metrics.
+
+ The  python -m timeit  command-line interface lets you quickly
+
+understand the performance of Python code snippets with little effort.
+
+Item 94: Know When and How to Replace Python with Another
+
+Programming Language
+
+At some point while using Python, you might feel that you’re pushing the
+
+envelope of what it can do. This is understandable because in order to
+
+provide Python’s enhanced developer productivity and ease of use, the
+
+language’s execution model must be limiting in other ways. The CPython
+
+implementation’s bytecode virtual machine and global interpreter lock
+
+(GIL), for example, negatively impact straight-line CPU performance, CPU
+
+parallelism, program startup time, and overall efficiency (see Item 68:
+
+“Use Threads for Blocking I/O; Avoid for Parallelism”).
+
+One potential solution is to rewrite all your code in another programming
+
+language and move away from Python. This might be the right choice in
+
+many circumstances, including:
+
+Your priority is critical path latency or 99th percentile latency, and you
+
+can’t tolerate garbage collection pauses or non-deterministic data
+
+structure behaviors (such as dictionary resizes).
+
+You care a lot about program startup delay, and techniques like pre-
+
+compilation, zip imports, and late module loading fall short (see Item
+
+97: “Rely on Precompiled Bytecode and File System Caching to
+
+Improve Startup Time” and Item 98: “Lazy-Load Modules with
+
+Dynamic Imports to Reduce Startup Time”).
+
+You need to take advantage of libraries with APIs that are tightly cou-
+
+pled to an implementation language, such as platform-specific GUI
+
+frameworks, and it’s impractical to bridge through C extensions (see
+
+details below).
+
+You need to target uncommon architectures like supercomputers or
+
+embedded systems, and the Python packages that support these envi-
+
+ronments (such as https://mpi4py.github.io and https://micropy-
+
+thon.org) are insufficient.
+
+You need to distribute your program as an installable executable, and
+
+bundling tools (see Item 125: “Prefer Open Source Projects for
+
+Bundling Python Programs over  zipimport  and  zipapp ”) don’t
+
+meet your requirements.
+
+You’ve tried all the optimization techniques listed below, as well as al-
+
+ternative implementations of the Python language that can achieve
+
+better performance (such as PyPy: https://www.pypy.org), and you’re
+
+still hitting a performance ceiling.
+
+You’ve tried to distribute computation across many Python processes
+
+on the same machine (see Item 79: “Consider  concurrent.futures
+
+for True Parallelism”) or spanning multiple computers using tools
+
+like Dask (https://www.dask.org) to no avail.
+
+However, before you commit to a full rewrite of the software you’ve built,
+
+it’s important to consider doing pinpointed optimizations using a variety
+
+of techniques, which each have unique trade-offs. What’s possible largely
+
+depends on how much Python code you have, how complex it is, the con-
+
+straints you’re under, and the requirements you need to satisfy.
+
+Many performance issues encountered in Python programs are from non-
+
+obvious causes. It’s important to profile and benchmark your code (see
+
+Item 92: “Profile Before Optimizing” and Item 93: “Optimize
+
+Performance-Critical Code Using  timeit  Microbenchmarks”) to find
+
+the true source of slowness or excess memory consumption (see Item
+
+115: “Use  tracemalloc  to Understand Memory Usage and Leaks”).
+
+You should also seriously investigate replacing your program’s core algo-
+
+rithms and data structures with better alternatives (see Item 104: “Know
+
+How to Use  heapq  for Priority Queues” and Item 102: “Consider
+
+Searching Sorted Sequences with  bisect ”), which can improve pro-
+
+gram performance by many orders of magnitude with surprisingly little
+
+effort.
+
+Once you’ve fully exhausted these paths, migrating to another program-
+
+ming language or execution model can be achieved in many ways. For ex-
+
+ample, a common source of performance problems in Python is tight
+
+loops, which you often see in mathematical kernel functions. The follow-
+
+ing Python code, which computes the dot product of two vectors, will run
+
+orders of magnitude slower than would similar behavior implemented in
+
+C:
+
+Click here to view code image
+
+def dot_product(a, b):
+    result = 0
+
+    for i, j in zip(a, b):
+        result += i * j
+
+    return result
+
+print(dot_product([1, 2], [3, 4]))
+
+>>>
+11
+
+Luckily, a kernel function like this also defines a clear interface that can
+
+serve as a seam between the slow and fast parts of a program. If you can
+
+find a way to accelerate the interior implementation of the  dot_prod‐
+
+uct  function, then all of its callers can benefit, without requiring you to
+
+make any other changes to the codebase. The same approach also works
+
+for much larger subcomponents if your program’s structure is amenable.
+
+The standard version of Python (see Item 1: “Know Which Version of
+
+Python You’re Using”) provides two tools to help improve performance
+
+in this way:
+
+The  ctypes  built-in module makes it easy to describe the interfaces
+
+of native libraries on your system and call the functions they export
+
+(see Item 95: “Consider  ctypes  to Rapidly Integrate with Native
+
+Libraries” for details). These libraries can be implemented in any lan-
+
+guage that’s compatible with the C calling convention (e.g., C, C++,
+
+Rust) and can leverage native threads, SIMD intrinsics, GPUs, and so
+
+on. No additional build system, compiler, or packaging is required.
+
+The Python C extension API allows you to create fully Pythonic APIs—
+
+taking advantage of all of Python’s dynamic features—that are actually
+
+implemented in C to achieve better performance (see Item 96:
+
+“Consider Extension Modules to Maximize Performance and
+
+Ergonomics” for details). This approach often requires more work up-
+
+front, but it provides vastly improved ergonomics. However, you’ll
+
+have to deal with additional build complexities, which can be difficult.
+
+The larger Python ecosystem has also responded to the need for perfor-
+
+mance optimization by creating excellent libraries and tools. Here are a
+
+few highlights you should know about, though there are many others (see
+
+Item 116: “Know Where to Find Community-Built Modules”):
+
+The NumPy module (https://numpy.org) enables you to operate on ar-
+
+rays of values with ergonomic Python function calls that, under the
+
+covers, use the BLAS (Basic Linear Algebra Subprograms) to achieve
+
+high performance and CPU parallelism. You’ll need to rewrite some of
+
+your data structures in order to use it, but the speedups can be
+
+enormous.
+
+The Numba module (https://numba.pydata.org) takes your existing
+
+Python functions and JIT (just-in-time) compiles them at runtime into
+
+highly optimized machine instructions. Some of your code might need
+
+to be slightly modified to use less dynamism and simpler data types.
+
+Like  ctypes , Numba avoids additional build complexity, which is a
+
+huge benefit.
+
+The Cython tool (https://cython.org) provides a superset of the Python
+
+language with extra features that make it easy to create C extension
+
+modules without actually writing C code. It shares the build complexi-
+
+ty of standard C extensions but can be much easier to use than the
+
+Python C API.
+
+Mypyc (https://github.com/mypyc/mypyc) is similar to Cython, but it
+
+uses standard annotations from the  typing  module (see Item 124:
+
+“Consider Static Analysis via  typing  to Obviate Bugs”) instead of
+
+requiring nonstandard syntax. This can make it easier to adopt with-
+
+out code changes. It can also AOT (ahead-of-time) compile whole pro-
+
+grams for faster startup time. Mypyc has similar build complexity to C
+
+extensions and doesn’t include Cython’s C integration features.
+
+The CFFI module (https://cffi.readthedocs.io) is similar to the
+
+ctypes  built-in module except that it can read C header files directly
+
+in order to understand the interfaces of functions you want to call.
+
+This automatic mapping significantly reduces the developer toil of
+
+calling into native libraries that contain a lot of functions and data
+
+structures.
+
+SWIG (https://www.swig.org) is a tool that can automatically generate
+
+Python interfaces for C and C++ native libraries. It’s similar to CFFI in
+
+this way, but the translation happens explicitly instead of at runtime,
+
+which can be more efficient. SWIG supports other target languages be-
+
+sides Python and a variety of customization options. It also requires
+
+build complexity like C extensions.
+
+One important caveat to note is that these tools and libraries might re-
+
+quire a non-trivial amount of developer time to learn and use effectively.
+
+It might be easier to rewrite components of a program from scratch in an-
+
+other language, especially given how great Python is at gluing together
+
+systems. You can use what you learned from building a Python imple-
+
+mentation to inform the design of the rewrite.
+
+That said, rewriting any of your Python code in C (or another language)
+
+also has a high cost. Code that is short and understandable in Python can
+
+become verbose and complicated in other languages. Porting also re-
+
+quires extensive testing to ensure that the functionality remains equiva-
+
+lent to the original Python code and that no bugs have been introduced.
+
+Sometimes rewrites are worth it, which explains the large ecosystem of C
+
+extension modules in the Python community that speed up things like
+
+text parsing, image compositing, and matrix math. For your own code,
+
+you’ll need to consider the risks vs. the potential rewards and decide on
+
+the best trade-off that’s appropriate for your situation.
+
+Things to Remember
+
+ There are many valid reasons to rewrite Python code in another lan-
+
+guage, but you should investigate all the optimization techniques
+
+available before pursuing that option.
+
+ Moving CPU bottlenecks to C extension modules and native libraries
+
+can be an effective way to improve performance while maximizing
+
+your investment in Python code. However, doing so has a high cost
+
+and may introduce bugs.
+
+ There are a large number of tools and libraries available in the
+
+Python ecosystem that can accelerate the slow parts of a Python pro-
+
+gram with surprisingly few changes.
+
+Item 95: Consider  ctypes  to Rapidly Integrate with Native
+
+Libraries
+
+The  ctypes  built-in module enables Python to call functions that are de-
+
+fined in native libraries. Those libraries can be implemented in any other
+
+programming language that can export functions following the C calling
+
+convention (e.g., C, C++, Rust). The module provides two key benefits to
+
+Python developers:
+
+ctypes  makes it easy to connect systems together using Python. If
+
+there’s an existing native library with functionality you need, you will
+
+be able to use it without much effort.
+
+ctypes  provides a straightforward path to optimizing slow parts of
+
+your program. If you find a hotspot you can’t otherwise speed up, you
+
+can reimplement it in another language and then call the faster ver-
+
+sion by using  ctypes .
+
+For example, consider the  dot_product  function from the previous
+
+item (see Item 94: “Know When and How to Replace Python with
+
+Another Programming Language”):
+
+def dot_product(a, b):
+
+    result = 0
+    for i, j in zip(a, b):
+
+        result += i * j
+    return result
+
+I can implement similar functionality using a simple C function that oper-
+
+ates on arrays. Here I define the interface:
+
+Click here to view code image
+
+/* my_library.h */
+
+extern double dot_product(int length, double* a, double* b);
+
+The implementation is simple and will be automatically vectorized by
+
+most C compilers to maximize performance using advanced processor
+
+features like SIMD (single instruction, multiple data) operations:
+
+Click here to view code image
+
+/* my_library.c */
+#include <stdio.h>
+
+#include "my_library.h"
+
+double dot_product(int length, double* a, double* b) {
+    double result = 0;
+
+    for (int i = 0; i < length; i++) {
+        result += a[i] * b[i];
+
+    }
+    return result;
+
+}
+
+Now I need to compile this code into a library file. Doing so is beyond the
+
+scope of this book, but the command on my machine is:
+
+Click here to view code image
+
+$ cc -shared -o my_library.lib my_library.c
+
+I can load this library file in Python simply by providing its path to the
+
+ctypes.cdll.LoadLibrary  constructor:
+
+Click here to view code image
+
+import ctypes
+
+library_path = ...
+
+my_library = ctypes.cdll.LoadLibrary(library_path)
+
+The  dot_product  function that was implemented in C is now available
+
+as an attribute of  my_library :
+
+Click here to view code image
+
+print(my_library.dot_product)
+
+>>>
+<_FuncPtr object at 0x10544cc50>
+
+If you wrap the imported function pointer with a  ctypes.CFUNCTYPE
+
+object, you might observe broken behavior due to implicit type conver-
+
+sions. Instead, it’s best to directly assign the  restype  and  argtypes  at-
+
+tributes of an imported function to the  ctypes  types that match the sig-
+
+nature of the function’s native implementation:
+
+Click here to view code image
+
+my_library.dot_product.restype = ctypes.c_double
+
+vector_ptr = ctypes.POINTER(ctypes.c_double)
+
+my_library.dot_product.argtypes = (
+    ctypes.c_int,
+
+    vector_ptr,
+    vector_ptr,
+
+)
+
+Calling the imported function is relatively easy. First, I define an array
+
+data type that contains three double values. Then I allocate two instances
+
+of that type to pass as arguments:
+
+Click here to view code image
+
+size = 3
+vector3 = ctypes.c_double * size
+
+a = vector3(1.0, 2.5, 3.5)
+b = vector3(-7, 4, -12.1)
+
+Finally, I call the  dot_product  imported function with these two arrays.
+
+I need to use the  ctypes.cast  helper function to ensure that the ad-
+
+dress of the first item in the array is supplied—matching C convention—
+
+instead of the address of the  vector3  Python object. I don’t need to do
+
+any casting of the return value because  ctypes  automatically converts it
+
+to a Python value:
+
+Click here to view code image
+
+result = my_library.dot_product(
+    3,
+
+    ctypes.cast(a, vector_ptr),
+    ctypes.cast(b, vector_ptr),
+
+)
+print(result)
+
+>>>
+
+-39.35
+
+It should be obvious by now that the ergonomics of the  ctypes  API are
+
+quite poor and not Pythonic. But it’s impressive how quickly everything
+
+comes together and starts working. To make it feel more natural, here I
+
+wrap the imported native function with a Python function to do the data
+
+type mapping and verify assumptions (see Item 81: “ assert  Internal
+
+Assumptions and  raise  Missed Expectations” for background):
+
+Click here to view code image
+
+def dot_product(a, b):
+
+    size = len(a)
+    assert len(b) == size
+
+    a_vector = vector3(*a)
+    b_vector = vector3(*b)
+
+    result = my_library.dot_product(size, a_vector, b_vector)
+    return result
+
+result = dot_product([1.0, 2.5, 3.5], [-7, 4, -12.1])
+
+print(result)
+
+>>>
+-39.35
+
+Alternatively, I can use Python’s C extension API (see Item 96: “Consider
+
+Extension Modules to Maximize Performance and Ergonomics”) to
+
+provide a more Pythonic interface with native performance. However,
+
+ctypes  has some worthwhile advantages over C extensions:
+
+Pointer values that you hold with  ctypes  will be freed automatically
+
+when the Python object reference count goes to zero. C extensions
+
+must do manual memory management for C pointers and manual ref-
+
+erence counting for Python objects.
+
+When you call a function with  ctypes , it automatically releases the
+
+GIL while the call is executing, allowing other Python threads to
+
+progress in parallel (see Item 68: “Use Threads for Blocking I/O;
+
+Avoid for Parallelism”). With a C extension module, the GIL must be
+
+managed explicitly, and functionality is limited while not holding the
+
+lock.
+
+With  ctypes , you simply provide a path to a shared object or dynam-
+
+ic library on disk, and it can be loaded. Compilation can be done sepa-
+
+rately with a build system that you already have in place. With Python
+
+C extensions, you need to leverage the Python build system to include
+
+the right paths, set linker flags, and so on; it’s a lot of complexity and
+
+potentially duplicative.
+
+But there are also important downsides to using the  ctypes  module in-
+
+stead of building a C extension:
+
+ctypes  restricts you to the data types that C can describe. You lose
+
+most of the expressive power of Python, including extremely common
+
+functionality like iterators (see Item 21: “Be Defensive when
+
+Iterating over Arguments”) and duck typing (see Item 25: “Be
+
+Cautious when Relying on Dictionary Insertion Ordering”). Even
+
+with wrappers, native functions imported using  ctypes  can feel
+
+strange to Python programmers and hamper productivity.
+
+Calling  ctypes  with the right data types often requires you to make
+
+copies or transformations of function inputs and outputs. The cost of
+
+this overhead might undermine the performance benefit of using a
+
+native library, rendering the whole optimization exercise worthless. C
+
+extensions allow you to bypass copies; the only speed limit is the in-
+
+herent performance of the underlying data types.
+
+If you use  ctypes  slightly the wrong way, you might cause your pro-
+
+gram to corrupt its own memory and behave strangely. For example, if
+
+you accidentally provide  ctypes.c_double  where you should have
+
+specified  ctypes.c_int  for function arguments or return values,
+
+you might see unpredictable crashes with cryptic error messages. The
+
+faulthandler  built-in module can help track down these problems,
+
+but they’re still difficult to debug.
+
+The best practice when using  ctypes  is to always write corresponding
+
+unit tests before putting it to work in more complex code (see Item 109:
+
+“Prefer Integration Tests over Unit Tests”). The goal of these tests is to
+
+exercise the basic surface area of a library that you’re calling in order to
+
+confirm that it works as expected for simple usage. This can help you de-
+
+tect situations such as when a function in a shared library has its argu-
+
+ment types modified but your  ctypes  usage hasn’t been updated to
+
+match. Here I test the  my_library.dot_product  symbol from the im-
+
+ported library:
+
+Click here to view code image
+
+from unittest import TestCase
+
+class MyLibraryTest(TestCase):
+
+    def test_dot_product(self):
+        vector3 = ctypes.c_double * size
+
+        a = vector3(1.0, 2.5, 3.5)
+        b = vector3(-7, 4, -12.1)
+
+        vector_ptr = ctypes.POINTER(ctypes.c_double)
+        result = my_library.dot_product(
+
+            3,
+            ctypes.cast(a, vector_ptr),
+
+            ctypes.cast(b, vector_ptr),
+        )
+
+        self.assertAlmostEqual(-39.35, result)
+
+...
+
+>>>
+.
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+
+The  ctypes  module includes additional functionality for mapping
+
+Python objects to C structs, copying memory, error checking, and a whole
+
+lot more (see the full manual at https://docs.python.org/3/library/ctype-
+
+s.html for details). Ultimately, you’ll need to decide if the ease and speed
+
+of development you get from using  ctypes  is worth its inferior er-
+
+gonomics and overhead.
+
+Things to Remember
+
+ The  ctypes  built-in module makes it easy to integrate the function-
+
+ality and performance of native libraries written in other languages
+
+into Python programs.
+
+ In comparison to the Python C extension API,  ctypes  enables rapid
+
+development without additional build complexity.
+
+ It’s difficult to write Pythonic APIs using  ctypes  because the data
+
+types and protocols available are limited to what can be expressed in
+
+C.
+
+Item 96: Consider Extension Modules to Maximize Performance and
+
+Ergonomics
+
+The CPython implementation of the Python language (see Item 1: “Know
+
+Which Version of Python You’re Using”) supports extension modules
+
+that are written in C. These modules can directly use the Python API to
+
+take advantage of object-oriented features (see Chapter 7), duck typing
+
+protocols (see Item 25: “Be Cautious when Relying on Dictionary
+
+Insertion Ordering”), reference counting garbage collection, and nearly
+
+every other feature that makes Python great. The previous item (see Item
+
+95: “Consider  ctypes  to Rapidly Integrate with Native Libraries”)
+
+presented the upsides and downsides of the  ctypes  built-in module. If
+
+you’re looking to provide a Pythonic development experience without
+
+compromising on performance or platform-specific capabilities, exten-
+
+sion modules are the way to go.
+
+Although creating an extension module is much more complicated than
+
+using  ctypes , the Python C API helps make it pretty straightforward. To
+
+demonstrate, I’ll implement the same  dot_product  function from be-
+
+fore (see Item 94: “Know When and How to Replace Python with
+
+Another Programming Language”) but as an extension module. First, I’ll
+
+declare the C function that I want the extension to provide:
+
+Click here to view code image
+
+/* my_extension.h */
+#define PY_SSIZE_T_CLEAN
+
+#include <Python.h>
+
+PyObject *dot_product(PyObject *self, PyObject *args);
+
+Then I’ll implement the function using C. The Python API I use to inter-
+
+face with inputs and outputs (e.g.,  PyList_Size ,
+
+PyFloat_FromDouble ) is extensive, constantly evolving, and—luckily—
+
+well documented (see https://docs.python.org/3/extending). This version
+
+of the function expects to receive two equally sized lists of floating point
+
+numbers and return a single floating point number:
+
+Click here to view code image
+
+/* dot_product.c */
+
+#include "my_extension.h"
+
+PyObject *dot_product(PyObject *self, PyObject *args)
+{
+
+    PyObject *left, *right;
+    if (!PyArg_ParseTuple(args, "OO", &left, &right)) {
+
+        return NULL;
+    }
+
+    if (!PyList_Check(left) || !PyList_Check(right)) {
+        PyErr_SetString(PyExc_TypeError, "Both arguments must be lists");
+
+        return NULL;
+    }
+
+    Py_ssize_t left_length = PyList_Size(left);
+    Py_ssize_t right_length = PyList_Size(right);
+
+    if (left_length == -1 || right_length == -1) {
+
+        return NULL;
+
+    }
+    if (left_length != right_length) {
+
+        PyErr_SetString(PyExc_ValueError, "Lists must be the same length");
+
+        return NULL;
+
+    }
+
+    double result = 0;
+
+    for (Py_ssize_t i = 0; i < left_length; i++) {
+        PyObject *left_item = PyList_GET_ITEM(left, i);
+
+        PyObject *right_item = PyList_GET_ITEM(right, i);
+
+        double left_double = PyFloat_AsDouble(left_item);
+        double right_double = PyFloat_AsDouble(right_item);
+
+        if (PyErr_Occurred()) {
+
+            return NULL;
+
+        }
+
+        result += left_double * right_double;
+
+    }
+
+    return PyFloat_FromDouble(result);
+
+}
+
+The function is about 40 lines of code, which is four times longer than a
+
+simple C implementation that can be called using the  ctypes  module.
+
+There’s also some additional boilerplate code required to configure the
+
+extension module and initialize it:
+
+Click here to view code image
+
+/* init.c */
+
+#include "my_extension.h"
+
+static PyMethodDef my_extension_methods[] = {
+
+    {
+
+        "dot_product",
+
+        dot_product,
+        METH_VARARGS,
+
+        "Compute dot product",
+
+    },
+
+    {
+        NULL,
+
+        NULL,
+
+        0,
+
+        NULL,
+    },
+
+};
+
+static struct PyModuleDef my_extension = {
+    PyModuleDef_HEAD_INIT,
+
+    "my_extension",
+
+    "My C-extension module",
+    -1,
+
+    my_extension_methods,
+
+};
+
+PyMODINIT_FUNC
+
+PyInit_my_extension(void)
+
+{
+
+    return PyModule_Create(&my_extension);
+}
+
+Now I need to compile the C code into a native library that can be dynam-
+
+ically loaded by the CPython interpreter. The simplest way to do this is to
+
+define a minimal  setup.py  configuration file:
+
+Click here to view code image
+
+# setup.py
+
+from setuptools import Extension, setup
+
+setup(
+    name="my_extension",
+
+    ext_modules=[
+
+        Extension(
+
+            name="my_extension",
+            sources=["init.c", "dot_product.c"],
+
+        ),
+
+    ],
+
+)
+
+I can use this configuration file, a virtual environment (see Item 117:
+
+“Use Virtual Environments for Isolated and Reproducible
+
+Dependencies”), and the  setuptools  package (see Item 116: “Know
+
+Where to Find Community-Built Modules”) to properly drive my sys-
+
+tem’s compiler with the right paths and flags; at the end, I’ll get a native
+
+library file that can be imported by Python:
+
+$ python3 -m venv .
+
+$ source bin/activate
+
+$ pip install setuptools
+
+...
+$ python3 setup.py develop
+
+...
+
+There are many ways to build Python extension modules and package
+
+them up for distribution. Unfortunately, the tools for this are constantly
+
+changing. In this example, I’m only focused on getting an extension mod-
+
+ule working in my local development environment. If you encounter
+
+problems or have other use cases, be sure to check the latest documenta-
+
+tion from the official Python Packaging Authority (https://www.pypa.io).
+
+After compilation, I can use tests written in Python (see Item 108: “Verify
+
+Related Behaviors in  TestCase  Subclasses”) to verify that the exten-
+
+sion module works as expected:
+
+Click here to view code image
+
+# my_extension_test.py
+
+import unittest
+
+import my_extension
+
+class MyExtensionTest(unittest.TestCase):
+
+    def test_empty(self):
+        result = my_extension.dot_product([], [])
+
+        self.assertAlmostEqual(0, result)
+
+    def test_positive_result(self):
+        result = my_extension.dot_product(
+
+            [3, 4, 5],
+
+            [-1, 9, -2.5],
+
+        )
+        self.assertAlmostEqual(20.5, result)
+
+    ...
+
+if __name__ == "__main__":
+
+    unittest.main()
+
+This was a lot of effort compared to the basic C implementation. And the
+
+ergonomics of the interface are about the same as if I used the  ctypes
+
+module: Both arguments to  dot_product  need to be lists that contain
+
+floats. If this is as far as you’re going to go with the C extension API, then
+
+it’s not worth it. You’d not be taking advantage of its most valuable
+
+features.
+
+Now I’m going to create another version of this extension module that
+
+uses the iterator and number protocols that are provided by the Python
+
+API. This is 60 lines of code—50% more than the simpler  dot_product
+
+function and six times more than the basic C version—but it enables the
+
+full set of features that make Python so powerful. By using the
+
+PyObject_GetIter  and  PyIter_Next  APIs, the input types can be any
+
+kind of iterable container, such as tuples, lists, generators, and so on (see
+
+Item 21: “Be Defensive when Iterating over Arguments”). By using the
+
+PyNumber_Multiply  and  PyNumber_Add  APIs, the values from the iter-
+
+ators can be any object that properly implements the number special
+
+methods (see Item 57: “Inherit from  collections.abc  Classes for
+
+Custom Container Types”):
+
+Click here to view code image
+
+/* dot_product.c */
+#include "my_extension2.h"
+
+PyObject *dot_product(PyObject *self, PyObject *args)
+
+{
+    PyObject *left, *right;
+
+    if (!PyArg_ParseTuple(args, "OO", &left, &right)) {
+
+        return NULL;
+
+    }
+    PyObject *left_iter = PyObject_GetIter(left);
+
+    if (left_iter == NULL) {
+
+        return NULL;
+
+    }
+    PyObject *right_iter = PyObject_GetIter(right);
+
+    if (right_iter == NULL) {
+
+        Py_DECREF(left_iter);
+
+        return NULL;
+    }
+
+    PyObject *left_item = NULL;
+
+    PyObject *right_item = NULL;
+    PyObject *multiplied = NULL;
+
+    PyObject *result = PyLong_FromLong(0);
+
+    while (1) {
+        Py_CLEAR(left_item);
+
+        Py_CLEAR(right_item);
+
+        Py_CLEAR(multiplied);
+
+        left_item = PyIter_Next(left_iter);
+        right_item = PyIter_Next(right_iter);
+
+        if (left_item == NULL && right_item == NULL) {
+
+            break;
+        } else if (left_item == NULL || right_item == NULL) {
+
+            PyErr_SetString(PyExc_ValueError, "Arguments had unequal length")
+
+            break;
+
+        }
+
+        multiplied = PyNumber_Multiply(left_item, right_item);
+
+        if (multiplied == NULL) {
+
+            break;
+        }
+
+        PyObject *added = PyNumber_Add(result, multiplied);
+
+        if (added == NULL) {
+
+            break;
+        }
+
+        Py_CLEAR(result);
+
+        result = added;
+    }
+
+    Py_CLEAR(left_item);
+
+    Py_CLEAR(right_item);
+    Py_CLEAR(multiplied);
+
+    Py_DECREF(left_iter);
+
+    Py_DECREF(right_iter);
+
+    if (PyErr_Occurred()) {
+
+        Py_CLEAR(result);
+
+        return NULL;
+
+    }
+
+    return result;
+
+}
+
+The implementation is further complicated by the need to properly man-
+
+age object reference counts and the peculiarities of error propagation
+
+and reference borrowing. But the result is, perhaps, Python’s holy grail: a
+
+module that is both fast and easy to use. Here I show that it works for
+
+multiple types of iterables and the  Decimal  numerical class (see Item
+
+106: “Use  decimal  when Precision Is Paramount”):
+
+Click here to view code image
+
+# my_extension2_test.py
+import unittest
+
+import my_extension2
+
+class MyExtension2Test(unittest.TestCase):
+
+    def test_decimals(self):
+
+        import decimal
+
+        a = [decimal.Decimal(1), decimal.Decimal(2)]
+
+        b = [decimal.Decimal(3), decimal.Decimal(4)]
+
+        result = my_extension2.dot_product(a, b)
+
+        self.assertEqual(11, result)
+
+    def test_not_lists(self):
+
+        result1 = my_extension2.dot_product(
+
+            (1, 2),
+            [3, 4],
+
+        )
+
+        result2 = my_extension2.dot_product(
+
+            [1, 2],
+            (3, 4),
+
+        )
+
+        result3 = my_extension2.dot_product(
+
+            range(1, 3),
+            range(3, 5),
+
+        )
+
+        self.assertAlmostEqual(11, result1)
+
+        self.assertAlmostEqual(11, result2)
+        self.assertAlmostEqual(11, result3)
+
+    ...
+
+if __name__ == "__main__":
+
+    unittest.main()
+
+This level of extensibility and flexibility in an API is what good ergonom-
+
+ics looks like. Achieving the same behaviors with basic C code would re-
+
+quire essentially reimplementing the core of the Python interpreter and
+
+API. Knowing that, the larger line count of these extension modules seems
+
+reasonable, given how much functionality and performance you get in
+
+return.
+
+Things to Remember
+
+ Extension modules are written in C, executing at native speed, and
+
+can use the Python API to access nearly all of Python’s powerful
+
+features.
+
+ The peculiarities of the Python API, including memory management
+
+and error propagation, can be hard to learn and difficult to get right.
+
+ The biggest value of a C extension comes from using the Python
+
+API’s protocols and built-in data types, which are difficult to replicate
+
+in simple C code.
+
+Item 97: Rely on Precompiled Bytecode and File System Caching to
+
+Improve Startup Time
+
+Program startup time is an important performance metric to examine be-
+
+cause it’s directly observable by users. For command-line utilities, the
+
+startup time is how long it takes for a program to begin processing after
+
+you’ve pressed the Enter key. Users often execute the same command-line
+
+tools repeatedly in rapid succession, so the accumulation of startup de-
+
+lays can feel like a frustrating waste of time. For a web server, the startup
+
+time is how long it takes to begin processing the first incoming request af-
+
+ter program launch. Web servers often use multiple threads or child pro-
+
+cesses to parallelize work, which can cause a cold start delay each time a
+
+new context is spun up. The end result is that some web requests can take
+
+a lot longer than others, annoying users with unpredictable delays.
+
+Unfortunately, Python programs usually have a high startup time com-
+
+pared to programs written in languages that are compiled into machine
+
+code executables. There are two main contributors to this slowness in the
+
+CPython implementation of Python (see Item 1: “Know Which Version of
+
+Python You’re Using”). First, on startup, CPython reads the source code
+
+for the program and compiles it into bytecode for its virtual machine in-
+
+terpreter, which requires both I/O and CPU processing (see Item 68: “Use
+
+Threads for Blocking I/O; Avoid for Parallelism” for details). Second,
+
+when the bytecode is ready, Python executes all of the modules imported
+
+by the main entry point. Loading modules requires running code to ini-
+
+tialize global variables and constants, define classes, execute assertion
+
+statements, and so on—and it can be a lot of work.
+
+To improve performance, modules are cached in memory after the first
+
+time they’re loaded by a program, and they’re reused for subsequent
+
+loads (see Item 122: “Know How to Break Circular Dependencies” for
+
+details). CPython also saves the bytecode it generates during compilation
+
+to a cache on disk so it can be reused for subsequent program starts. The
+
+cache is stored in a directory called  __pycache__  next to the source
+
+code. Each bytecode file has a  .pyc  suffix and is usually smaller than the
+
+corresponding source file.
+
+It’s easy to see the effect of bytecode caching in action. For example, here
+
+I load all the modules from the Django web framework (https://www.d-
+
+jangoproject.com) and measure how long it takes (specifically, the “real”
+
+time). This is a source code–only snapshot of the open source project, and
+
+no bytecode cache files are present:
+
+Click here to view code image
+
+$ time python3 -c 'import django_all'
+...
+
+real    0m0.791s
+
+user    0m0.495s
+
+sys     0m0.145s
+
+If I run the same program again with absolutely no modifications, it starts
+
+up in 70% less time than before—more than three times faster:
+
+Click here to view code image
+
+$ time python3 -c 'import django_all'
+...
+
+real    0m0.225s
+
+user    0m0.182s
+
+sys     0m0.038s
+
+You might guess that this performance improvement is due to CPython
+
+using the bytecode cache the second time the program starts. However, if
+
+I remove the  .pyc  files, performance is surprisingly still better than the
+
+first time I executed Python and imported this module:
+
+Click here to view code image
+
+$ find django -name '*.pyc' -delete
+
+$ time python3 -c 'import django_all'
+
+real    0m0.613s
+
+user    0m0.502s
+sys     0m0.101s
+
+This is a good example of how measuring performance is difficult and
+
+how the effects of optimizations can be confusing. What caused the sub-
+
+sequent Python invocation without  .pyc  files to be faster is the filesys-
+
+tem cache of my operating system. The Python source code files are al-
+
+ready in memory because I recently accessed them. When I load them
+
+again, expensive I/O operations can be shortened, speeding up program
+
+start.
+
+I can regenerate the bytecode files by using the  compileall  built-in
+
+module. This is usually done automatically when you install packages
+
+with  pip  (see Item 117: “Use Virtual Environments for Isolated and
+
+Reproducible Dependencies”) to minimize startup time. But you can
+
+create new bytecode files manually for your own codebase when needed
+
+(e.g., before deploying to production):
+
+Click here to view code image
+
+$ python3 -m compileall django
+Listing 'django'...
+
+Compiling 'django/__init__.py'...
+
+Compiling 'django/__main__.py'...
+
+Listing 'django/apps'...
+
+Compiling 'django/apps/__init__.py'...
+
+Compiling 'django/apps/config.py'...
+
+Compiling 'django/apps/registry.py'...
+...
+
+Most operating systems provide a way to purge the file system cache,
+
+which will cause subsequent I/O operations to go to the physical disk in-
+
+stead of memory. Here I force the cache to be empty (using the  purge
+
+command) and then re-run the  django_all  import to see the perfor-
+
+mance impact of having bytecode files on disk and not in memory:
+
+Click here to view code image
+
+$ sudo purge
+
+$ time python3 -c 'import django_all'
+
+...
+
+real    0m0.382s
+user    0m0.169s
+
+sys     0m0.085s
+
+This startup time (382 milliseconds) is faster than having no bytecode and
+
+an empty filesystem cache (791 milliseconds) and faster that having no
+
+bytecode and the source code cached in memory (613 milliseconds), but it
+
+is slower than having both bytecode and source code in memory (225 mil-
+
+liseconds). Ultimately, you’ll get the best startup performance by ensuring
+
+that your bytecode is precompiled and in the filesystem cache. For this
+
+reason, it can be valuable to put Python programs on a RAM disk so they
+
+are always in memory, regardless of access patterns. The effect of this will
+
+be even more pronounced when your computer has a spinning disk; I
+
+used an SSD (solid-state drive) in these tests. When caching in memory is
+
+not possible, other approaches to reduce startup time might be valuable
+
+(see Item 98: “Lazy-Load Modules with Dynamic Imports to Reduce
+
+Startup Time”).
+
+Finally, you might wonder if it’s even faster to run a Python program
+
+without the source code files present at all, since it appears that the byte-
+
+code cache is all that CPython needs to execute a program. Indeed, this is
+
+possible. The trick is to use the  -b  flag when generating the bytecode,
+
+which causes the individual  .pyc  files to be placed next to source code
+
+instead of in  __pycache__  directories. Here I modify the  django  pack-
+
+age accordingly and then test the speed of importing the  django_all
+
+module again:
+
+Click here to view code image
+
+$ find django -name '*.pyc' -delete
+
+$ python3 -m compileall -b django
+$ find django -name '*.py' -delete
+
+$ time python3 -c 'import django_all'
+
+...
+
+real    0m0.226s
+
+user    0m0.183s
+
+sys     0m0.037s
+
+The startup time in this case (226 milliseconds) is almost exactly the same
+
+as when the source code files were also present. Thus, there’s no value in
+
+deleting the source code unless you have other constraints you need to
+
+satisfy, such as minimizing overall storage or system memory use (see
+
+Item 125: “Prefer Open Source Projects for Bundling Python Programs
+
+over  zipimport  and  zipapp ” for an example).
+
+Things to Remember
+
+ The CPython implementation of Python compiles a program’s source
+
+files into bytecode that is then executed in a virtual machine.
+
+ Bytecode is cached to disk, which enables subsequent runs of the
+
+same program, or loads of the same module, to avoid compiling byte-
+
+code again.
+
+ With CPython, the best performance for program startup time is
+
+achieved when the program’s bytecode files are generated in advance
+
+and they’re already cached in operating system memory.
+
+Item 98: Lazy-Load Modules with Dynamic Imports to Reduce
+
+Startup Time
+
+The previous item investigated how Python program initialization can be
+
+slow and considered ways to improve performance (see Item 97: “Rely
+
+on Precompiled Bytecode and File System Caching to Improve
+
+Startup Time”). After following those best practices and further optimiz-
+
+ing (see Item 92: “Profile Before Optimizing”), your Python programs
+
+might still feel like they take too long to start. Fortunately, there is one
+
+more technique to try: dynamic imports.
+
+For example, imagine that I’m building an image processing tool with two
+
+features. The first module adjusts an image’s brightness and contrast
+
+based on user-supplied settings:
+
+Click here to view code image
+
+# adjust.py
+# Fast initialization
+
+...
+
+def do_adjust(path, brightness, contrast):
+    ...
+
+The second module intelligently enhances an image a given amount. To
+
+demonstrate a realistic situation, I’m going to assume that this requires
+
+loading a large native image processing library and thus initializes
+
+slowly:
+
+# enhance.py
+
+# Very slow initialization
+
+...
+
+def do_enhance(path, amount):
+
+    ...
+
+I can make these functions available as a command-line utility with the
+
+argparse  built-in module. Here I use the  add_subparsers  feature to
+
+require a different set of flags, depending on the user-specified command.
+
+The  adjust  command accepts the  --brightness  and  --contrast
+
+flags, and the  enhance  command only needs the  --amount  flag:
+
+Click here to view code image
+
+# parser.py
+
+import argparse
+
+PARSER = argparse.ArgumentParser()
+
+PARSER.add_argument("file")
+
+sub_parsers = PARSER.add_subparsers(dest="command")
+
+enhance_parser = sub_parsers.add_parser("enhance")
+
+enhance_parser.add_argument("--amount", type=float)
+
+adjust_parser = sub_parsers.add_parser("adjust")
+
+adjust_parser.add_argument("--brightness", type=float)
+
+adjust_parser.add_argument("--contrast", type=float)
+
+In the  main  function, I parse the arguments and then call into the  en‐
+
+hance  and  adjust  modules accordingly:
+
+Click here to view code image
+
+# mycli.py
+
+import adjust
+import enhance
+
+import parser
+
+def main():
+    args = parser.PARSER.parse_args()
+
+    if args.command == "enhance":
+
+        enhance.do_enhance(args.file, args.amount)
+    elif args.command == "adjust":
+
+        adjust.do_adjust(    args.file, args.brightness, args.contrast)
+
+    else:
+
+        raise RuntimeError("Not reachable")
+
+if __name__ == "__main__":
+
+    main()
+
+Although the functionality here works well, the program is slow. For ex-
+
+ample, here I run the  enhance  command and observe that it takes over
+
+1 second to complete:
+
+Click here to view code image
+
+$ time python3 ./mycli.py my_file.jpg enhance --amount 0.8
+...
+
+real    0m1.089s
+
+user    0m0.035s
+
+sys     0m0.022s
+
+The cause of this long execution time is probably the dependency on the
+
+large native image processing library in the  enhance  module. I don’t use
+
+that library for the  adjust  command, so I expect that it will go faster:
+
+Click here to view code image
+
+$ time python3 ./mycli.py my_file.jpg adjust --brightness
+➥.3 --contrast -0.1
+...
+
+real    0m1.064s
+
+user    0m0.040s
+sys     0m0.016s
+
+Unfortunately, it appears that the  enhance  and  adjust  commands are
+
+similarly slow. Upon closer inspection, I see that the problem is that I’m
+
+importing all of the modules that might ever be used by the command-
+
+line tool at the top of the main module, in keeping with PEP 8 style (see
+
+Item 2: “Follow the PEP 8 Style Guide”). On startup, my program pays
+
+the computational cost of preparing all functionality even when only part
+
+of it is actually used.
+
+The CPython implementation of Python (see Item 1: “Know Which
+
+Version of Python You’re Using”) supports the  -X importtime  flag,
+
+which directly measures the performance of module loading. Here I use it
+
+to diagnose the slowness of my command-line tool:
+
+Click here to view code image
+
+$ python3 -X importtime mycli.py
+
+import time: self [us] | cumulative | imported package
+
+...
+
+import time:       553 |        553 | adjust
+import time:   1005348 |    1005348 | enhance
+
+...
+
+import time:      3347 |      14762 | parser
+
+The  self  column shows how much time (in microseconds) each module
+
+took to execute all of its global statements, excluding imports. The  cumu‐
+
+lative  column shows how much time it took to load each module, in-
+
+cluding all of its dependencies. Clearly, the  enhance  module is the
+
+culprit.
+
+One solution is to delay importing dependencies until you actually need
+
+to use them. This is possible because Python supports importing modules
+
+at runtime—inside functions—in addition to using module-scoped  im‐
+
+port  statements at program startup (see Item 122: “Know How to Break
+
+Circular Dependencies” for another use of this dynamism). Here I modi-
+
+fy the command-line tool to only import the  adjust  module or the  en‐
+
+hance  module inside the  main  function after the command is
+
+dispatched:
+
+Click here to view code image
+
+# mycli_faster.py
+
+import parser
+
+def main():
+
+    args = parser.PARSER.parse_args()
+
+    if args.command == "enhance":
+        import enhance  # Changed
+
+        enhance.do_enhance(args.file, args.amount)
+
+    elif args.command == "adjust":
+        import adjust   # Changed
+
+        adjust.do_adjust(    args.file, args.brightness, args.contrast)
+
+    else:
+        raise RuntimeError("Not reachable")
+
+if __name__ == "__main__":
+
+    main()
+
+With this modification in place, the  adjust  command runs very quickly
+
+because the initialization of  enhance  can be skipped:
+
+Click here to view code image
+
+$ time python3 ./mycli_faster.py my_file.jpg adjust
+➥--brightness .3 --contrast -0.1
+...
+
+real    0m0.049s
+
+user    0m0.032s
+sys     0m0.013s
+
+The  enhance  command remains as slow as before:
+
+Click here to view code image
+
+$ time python3 ./mycli_faster.py my_file.jpg enhance
+➥--amount 0.8
+...
+
+real    0m1.059s
+user    0m0.036s
+
+sys     0m0.014s
+
+I can also use  -X importtime  to confirm that the  adjust  and  en‐
+
+hance  modules are not loaded when no command is specified:
+
+Click here to view code image
+
+$ time python3 -X importtime ./mycli_faster.py -h
+
+import time: self [us] | cumulative | imported package
+...
+
+import time:      1118 |       6015 | parser
+
+...
+
+real    0m0.049s
+user    0m0.032s
+
+sys     0m0.013s
+
+Lazy-loading modules works great for command-line tools like this that
+
+carry out a single task to completion and then terminate. But what if I
+
+need to reduce the latency of cold starts in a web application? Ideally, the
+
+cost of loading the  enhance  module wouldn’t be incurred until the fea-
+
+ture is actually requested by a user. Luckily, the same approach also
+
+works inside request handlers. Here I create a  flask  web application
+
+with one handler for each feature that dynamically imports the corre-
+
+sponding module:
+
+Click here to view code image
+
+# server.py
+
+from flask import Flask, render_template, request
+
+app = Flask(__name__)
+
+@app.route("/adjust", methods=["GET", "POST"])
+
+def do_adjust():
+
+    if request.method == "POST":
+        the_file = request.files["the_file"]
+
+        brightness = request.form["brightness"]
+
+        contrast = request.form["contrast"]
+
+        import adjust   # Dynamic import
+
+        return adjust.do_adjust(the_file, brightness, contrast)
+
+    else:
+
+        return render_template("adjust.html")
+
+@app.route("/enhance", methods=["GET", "POST"])
+
+def do_enhance():
+
+    if request.method == "POST":
+        the_file = request.files["the_file"]
+
+        amount = request.form["amount"]
+
+        import enhance  # Dynamic import
+
+        return enhance.do_enhance(the_file, amount)
+
+    else:
+
+        return render_template("enhance.html")
+
+When the  do_enhance  request handler is executed in the Python
+
+process for the first time, it imports the  enhance  module and pays a high
+
+initialization cost of 1 second. On subsequent calls to  do_enhance , the
+
+import enhance  statement will cause the Python process to merely ver-
+
+ify that the module has already been loaded and then assign the  en‐
+
+hance  identifier in the local scope to the corresponding module object.
+
+You might assume that the cost of a dynamic  import  statement is high,
+
+but it’s actually not too bad. Here I use the  timeit  built-in module (see
+
+Item 93: “Optimize Performance-Critical Code Using  timeit
+
+Microbenchmarks”) to measure how much time it takes to dynamically
+
+import a previously imported module:
+
+Click here to view code image
+
+# import_perf.py
+
+import timeit
+
+trials = 10_000_000
+
+result = timeit.timeit(
+
+    setup="import enhance",
+    stmt="import enhance",
+
+    globals=globals(),
+
+    number=trials,
+
+)
+
+print(f"{result/trials * 1e9:2.1f} nanos per call")
+
+>>>
+52.8 nanos per call
+
+To put this overhead (52 nanoseconds) in perspective, here’s another ex-
+
+ample that replaces the dynamic  import  statement with a lock-protect-
+
+ed global variable (which is a common way to prevent multiple threads
+
+from dog-piling during program initialization):
+
+Click here to view code image
+
+# global_lock_perf.py
+import timeit
+
+import threading
+
+trials = 100_000_000
+
+initialized = False
+
+initialized_lock = threading.Lock()
+
+result = timeit.timeit(
+
+    stmt="""
+
+global initialized
+
+# Speculatively check without the lock
+if not initialized:
+
+    with initialized_lock:
+
+        # Double check after holding the lock
+
+        if not initialized:
+            # Do expensive initialization
+
+            ...
+
+            initialized = True
+
+""",
+
+    globals=globals(),
+
+    number=trials,
+)
+
+print(f"{result/trials * 1e9:2.1f} nanos per call")
+
+>>>
+
+5.5 nanos per call
+
+The dynamic import version takes ten times longer than the approach us-
+
+ing globals, so it’s definitely much slower. Without any lock contention—
+
+which is the common case due to the speculative  if not initialized
+
+statement—the global variable version runs just about as quickly as when
+
+you add together two integers in Python. But the dynamic import version
+
+is much simpler code that doesn’t require any boilerplate. You wouldn’t
+
+want a dynamic import to be present in CPU-bound code like a kernel
+
+function’s inner loop (see Item 94: “Know When and How to Replace
+
+Python with Another Programming Language” for details), but it seems
+
+reasonable to do it once per web request.
+
+Things to Remember
+
+ The CPython  -X importtime  flag causes a Python program to
+
+print out how much time it takes to load imported modules and their
+
+dependencies, making it easy to diagnose the cause of startup time
+
+slowness.
+
+ Modules can be imported dynamically inside a function, which
+
+makes it possible to delay the expensive initialization of dependencies
+
+until functionality actually needs to be used.
+
+ The overhead of dynamically importing a module and checking that
+
+it was previously loaded is on the order of 20 addition operations,
+
+making it well worth the incremental cost if it can significantly im-
+
+prove the latency of cold starts.
+
+Item 99: Consider  memoryview  and  bytearray  for Zero-Copy
+
+Interactions with  bytes
+
+Although Python isn’t able to parallelize CPU-bound computation without
+
+extra effort (see Item 79: “Consider  concurrent.futures  for True
+
+Parallelism” and Item 94: “Know When and How to Replace Python
+
+with Another Programming Language”), it is able to support high-
+
+throughput, parallel I/O in a variety of ways (see Item 68: “Use Threads
+
+for Blocking I/O; Avoid for Parallelism” and Item 75: “Achieve Highly
+
+Concurrent I/O with Coroutines”). That said, it’s surprisingly easy to use
+
+I/O tools the wrong way and reach the conclusion that the language is too
+
+slow for even I/O-bound workloads.
+
+For example, say that I'm building a media server to stream television or
+
+movies over a network to users so they can watch without having to
+
+download the video data in advance. One of the key features of such a
+
+system is the ability for users to move forward or backward in the video
+
+playback so they can skip or repeat parts. In the client program, I can im-
+
+plement this by requesting a chunk of data from the server correspond-
+
+ing to the new time index selected by the user:
+
+Click here to view code image
+
+def timecode_to_index(video_id, timecode):
+    ...
+
+    # Returns the byte offset in the video data
+
+def request_chunk(video_id, byte_offset, size):
+    ...
+
+    # Returns size bytes of video_id's data from the offset
+
+video_id = ...
+
+timecode = "01:09:14:28"
+
+byte_offset = timecode_to_index(video_id, timecode)
+
+size = 20 * 1024 * 1024
+video_data = request_chunk(video_id, byte_offset, size)
+
+How would you implement the server-side handler that receives the  re‐
+
+quest_chunk  request and returns the corresponding 20 MB chunk of
+
+video data? For the sake of this example, I assume that the command and
+
+control parts of the server have already been hooked up (see Item 76:
+
+“Know How to Port Threaded I/O to  asyncio ” for what that requires). I
+
+focus here on the last steps, where the requested chunk is extracted from
+
+gigabytes of video data that’s cached in memory and is then sent over a
+
+socket back to the client. Here’s what the implementation would look like:
+
+Click here to view code image
+
+socket = ...             # socket connection to client
+
+video_data = ...         # bytes containing data for video_id
+byte_offset = ...        # Requested starting position
+
+size = 20 * 1024 * 1024  # Requested chunk size
+
+chunk = video_data[byte_offset : byte_offset + size]
+socket.send(chunk)
+
+The latency and throughput of this code come down to two factors: how
+
+much time it takes to slice the 20 MB video chunk from  video_data  and
+
+how much time the socket takes to transmit that data to the client. If I as-
+
+sume that the socket is infinitely fast, I can run a microbenchmark by us-
+
+ing the  timeit  built-in module to understand the performance charac-
+
+teristics of slicing  bytes  instances this way to create chunks (see Item
+
+14: “Know How to Slice Sequences” for background):
+
+Click here to view code image
+
+import timeit
+
+def run_test():
+
+    chunk = video_data[byte_offset : byte_offset + size]
+    # Call socket.send(chunk), but ignoring for benchmark
+
+result = (
+
+    timeit.timeit(
+
+        stmt="run_test()",
+        globals=globals(),
+
+        number=100,
+
+    )
+
+    / 100
+)
+
+print(f"{result:0.9f} seconds")
+
+>>>
+
+0.004925669 seconds
+
+Here it took roughly 5 milliseconds to extract the 20 MB slice of data to
+
+transmit to the client. That means the overall throughput of my server is
+
+limited to a theoretical maximum of 20 MB / 5 milliseconds = 4 GB/second,
+
+since that’s the fastest I can extract the video data from memory. My
+
+server will also be limited to 1 CPU-second / 5 milliseconds = 200 clients
+
+requesting new chunks in parallel, which is tiny compared to the tens of
+
+thousands of simultaneous connections that tools like the  asyncio  built-
+
+in module can support. The problem is that slicing a  bytes  instance
+
+causes the underlying data to be copied, which takes CPU time.
+
+A better way to write this code is by using Python’s built-in  memoryview
+
+type, which exposes CPython’s high-performance buffer protocol to pro-
+
+grams. The buffer protocol is a low-level C API that allows the Python run-
+
+time and C extensions (see Item 96: “Consider Extension Modules to
+
+Maximize Performance and Ergonomics”) to access the underlying data
+
+buffers that are behind objects like  bytes  instances. The best part about
+
+memoryview  instances is that slicing them results in another  memo‐
+
+ryview  instance without copying the underlying data. Here I create a
+
+memoryview  instance that wraps a  bytes  instance and inspect a slice of
+
+it:
+
+Click here to view code image
+
+data = b"shave and a haircut, two bits"
+
+view = memoryview(data)
+
+chunk = view[12:19]
+
+print(chunk)
+print("Size:           ", chunk.nbytes)
+
+print("Data in view:   ", chunk.tobytes())
+
+print("Underlying data:", chunk.obj)
+
+>>>
+
+<memory at 0x105407940>
+
+Size:            7
+
+Data in view:    b'haircut'
+Underlying data: b'shave and a haircut, two bits'
+
+By enabling zero-copy operations,  memoryview  can provide enormous
+
+speedups for code that needs to quickly process large amounts of memo-
+
+ry, such as numerical C-extensions like NumPy and I/O-bound programs
+
+like this one. Here I replace the simple  bytes  slicing above with  memo‐
+
+ryview  slicing instead and repeat the same microbenchmark:
+
+Click here to view code image
+
+video_view = memoryview(video_data)
+
+def run_test():
+
+    chunk = video_view[byte_offset : byte_offset + size]
+
+    # Call socket.send(chunk), but ignoring for benchmark
+
+result = (
+
+    timeit.timeit(
+
+        stmt="run_test()",
+
+        globals=globals(),
+        number=100,
+
+    )
+
+    / 100
+
+)
+
+print(f"{result:0.9f} seconds")
+
+>>>
+
+0.000000250 seconds
+
+The result is 250 nanoseconds. Now the theoretical maximum throughput
+
+of my server is 20 MB / 250 nanoseconds = 80 TB/second. For parallel
+
+clients, I can theoretically support up to 1 CPU-second / 250 nanoseconds
+
+= 4 million. That’s more like it! This means that now my program is en-
+
+tirely bound by the underlying performance of the socket connection to
+
+the client and not by CPU constraints.
+
+Now imagine that the data must flow in the other direction, where some
+
+clients are sending live video streams to the server in order to broadcast
+
+them to other users. In order to handle this, I need to store the latest
+
+video data from the user in a cache that other clients can read from.
+
+Here’s what the implementation of reading 1 MB of new data from the in-
+
+coming client would look like:
+
+Click here to view code image
+
+socket = ...        # socket connection to the client
+
+video_cache = ...   # Cache of incoming video stream
+
+byte_offset = ...   # Incoming buffer position
+
+size = 1024 * 1024  # Incoming chunk size
+
+chunk = socket.recv(size)
+
+video_view = memoryview(video_cache)
+
+before = video_view[:byte_offset]
+after = video_view[byte_offset + size :]
+
+new_cache = b"".join([before, chunk, after])
+
+The  socket.recv  method returns a  bytes  instance. I can splice the
+
+new data with the existing cache at the current  byte_offset  by using
+
+simple slicing operations and the  bytes.join  method. To understand
+
+the performance of this, I can run another microbenchmark. I’m using a
+
+dummy socket implementation, so the performance test is only for the
+
+memory operations, not the I/O interaction:
+
+Click here to view code image
+
+def run_test():
+
+    chunk = socket.recv(size)
+
+    before = video_view[:byte_offset]
+
+    after = video_view[byte_offset + size :]
+    new_cache = b"".join([before, chunk, after])
+
+result = (
+
+    timeit.timeit(
+        stmt="run_test()",
+
+        globals=globals(),
+
+        number=100,
+
+    )
+    / 100
+
+)
+
+print(f"{result:0.9f} seconds")
+
+>>>
+
+0.033520550 seconds
+
+It takes 33 milliseconds to receive 1 MB and update the video cache. This
+
+means my maximum receive throughput is 1 MB / 33 milliseconds = 31
+
+MB/second, and I’m limited to 31 MB / 1 MB = 31 simultaneous clients
+
+streaming in video data this way. This doesn’t scale.
+
+A better way to write this code is to use Python’s built-in  bytearray  type
+
+in conjunction with  memoryview . One limitation with  bytes  instances
+
+is that they are read-only and don’t allow for individual indexes to be
+
+updated:
+
+Click here to view code image
+
+my_bytes = b"hello"
+
+my_bytes[0] = 0x79
+
+>>>
+
+Traceback ...
+
+TypeError: 'bytes' object does not support item assignment
+
+The  bytearray  type is like a mutable version of  bytes  that allows for
+
+arbitrary positions to be overwritten.  bytearray  uses integers for its
+
+values instead of  bytes :
+
+Click here to view code image
+
+my_array = bytearray(b"hello")
+
+my_array[0] = 0x79
+
+print(my_array)
+
+>>>
+bytearray(b'yello')
+
+A  memoryview  object can also be used to wrap a  bytearray  instance.
+
+When you slice a  memoryview , the resulting object can be used to assign
+
+data to a particular portion of the underlying buffer. This eliminates the
+
+copying costs from above that were required to splice the  bytes  in-
+
+stances back together after data was received from the client:
+
+Click here to view code image
+
+my_array = bytearray(b"row, row, row your boat")
+
+my_view = memoryview(my_array)
+
+write_view = my_view[3:13]
+
+write_view[:] = b"-10 bytes-"
+print(my_array)
+
+>>>
+
+bytearray(b'row-10 bytes- your boat')
+
+Many library methods in Python, such as  socket.recv_into  and
+
+RawIOBase.readinto , use the buffer protocol to receive or read data
+
+quickly. The benefit of these methods is that they avoid allocating memo-
+
+ry and creating another copy of the data; what’s received goes straight
+
+into an existing buffer. Here I use  socket.recv_into  along with a
+
+memoryview  slice to receive data into an underlying  bytearray  with-
+
+out the need for any splicing:
+
+Click here to view code image
+
+video_array = bytearray(video_cache)
+
+write_view = memoryview(video_array)
+chunk = write_view[byte_offset : byte_offset + size]
+
+socket.recv_into(chunk)
+
+I can run another microbenchmark to compare the performance of this
+
+approach to the earlier example that used  socket.recv :
+
+Click here to view code image
+
+def run_test():
+
+    chunk = write_view[byte_offset : byte_offset + size]
+
+    socket.recv_into(chunk)
+
+result = (
+
+    timeit.timeit(
+
+        stmt="run_test()",
+        globals=globals(),
+
+        number=100,
+
+    )
+
+    / 100
+
+)
+
+print(f"{result:0.9f} seconds")
+
+>>>
+
+0.000033925 seconds
+
+It took 33 microseconds to receive a 1 MB video transmission. This means
+
+my server can support 1 MB / 33 microseconds = 31 GB/second of max
+
+throughput, and 31 GB / 1 MB = 31,000 parallel streaming clients. That’s
+
+the type of scalability I’m looking for!
+
+Things to Remember
+
+ The  memoryview  built-in type provides a zero-copy interface for
+
+reading and writing slices of objects that support Python’s high-perfor-
+
+mance buffer protocol.
+
+ The  bytearray  built-in type provides a mutable  bytes -like type
+
+that can be used for zero-copy data reads with functions like
+
+socket.recv_from .
+
+ A  memoryview  can wrap a  bytearray , allowing for received data
+
+to be spliced into an arbitrary buffer location without copying costs.
+
+Previous chapter
+
+Next chapter
+
+Chapter 10. Robustness
+
+Chapter 12. Data Structures and Algorithms
+
