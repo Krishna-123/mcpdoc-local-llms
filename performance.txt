@@ -1,4 +1,4 @@
-
+Performance
 There are a wide range of metrics for judging the execution quality of a
 program, including CPU utilization, throughput, latency, response time,
 memory usage, and cache hit rate. These metrics can also be assessed in
